@@ -42,9 +42,17 @@ model {
     vector[N] resid_rt = log(RT - ndt) - eta_rt;
     vector[N] eta_acc = a_acc + X * beta_acc + tau * resid_rt;
     
-    target += lognormal_pdf(RT - ndt | eta_rt, sigma);
-    acc ~ binomial(Phi_approx(eta_acc));
-    
+    // resid_rt ~ normal(0, sigma);
+    // target += sum(-log(RT - ndt));
+    (RT - ndt) ~ lognormal(eta_rt, sigma);
+    acc ~ bernoulli(Phi_approx(eta_acc));
   }
+  
+  a_rt ~ normal(1, 1);
+  beta_rt ~ std_normal();
+  beta_acc ~ std_normal();
+  ndt ~ normal(0, 0.3);
+  tau ~ std_normal();
+  sigma ~ normal(0, 2);
 }
 
