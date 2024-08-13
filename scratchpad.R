@@ -11,12 +11,12 @@ df <- read.csv(paste0(datadir, "dataset1.csv")) %>%
          switchType = ifelse(switchType == "s", 1, 0),
          subject = match(subject, unique(subject))) %>% 
   dplyr::filter(RT < 1.5 & RT > 0.3) |> as.data.table()
+df[,trial := 1:.N, by=.(subject, block)]
 
-stan_data <- with(df[subject==9], {
+stan_data <- with(df[subject==1], {
   list(X=model.matrix(~ switchType*stimCongruency)[,-1],
-       RT=RT, acc=acc, N=length(RT), K=3, RTmin=min(RT), )
+       RT=RT, acc=acc, N=length(RT), K=3, RTmin=min(RT))
 })
-stan_data$trial = 
 
 model_normlognorm <- stan_model("models/normlognorm.stan")
 fit_normlognorm <- sampling(model_normlognorm, stan_data, iter=400)
@@ -24,7 +24,17 @@ fit_normlognorm <- sampling(model_normlognorm, stan_data, iter=400)
 model_ddm <- stan_model("models/ddm.stan")
 fit_ddm <- sampling(model_ddm, stan_data, iter=400)
 
-model_normlognorm_learner <- stan_model("models/normlognorm_learner.stan")
+model_learner <- stan_model("models/normlognorm_learner.stan")
+stan_data <- with(df[subject==19], list(isInc=stimCongruency, isSwitch=switchType, RT=RT, acc=acc,
+                                       N=length(RT), K=3, RTmin=min(RT), trial=trial))
+fit_learner_5 <- sampling(model_learner, stan_data, iter=400, pars=c("X", "switchProp", "incProp", "log_lik"), include=F, refresh=F)
+
+ds <- df
+stan_data <- list(isInc=ds$stimCongruency, isSwitch=ds$switchType, RT=ds$RT, acc=ds$acc,
+                  N=nrow(ds), M=uniqueN(ds$subject), K=3, RTmin=ds[,min(RT), by=subject]$V1, trial=ds$trial, S=ds$subject)
+model_hier <- stan_model("models/normlognorm_learner_hierarchical.stan")
+fit_hier <- sampling(model_hier, stan_data, iter=500, pars=c("X", "switchProp", "incProp"), include=F, init="0")
+
 
 ##### raw tradeoffs
 foo <- df[, mean(RT), by=.(stimCongruency, incProp, subject)] |> dcast(subject ~ stimCongruency + incProp)
