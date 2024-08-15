@@ -1,6 +1,33 @@
+functions {
+  matrix design_matrix(vector isInc, vector isSwitch, vector incProp, vector switchProp, int K) {
+    int N = num_elements(isInc);
+    matrix[N, K] X;
+    
+    X[, 1] = isInc;
+    X[, 2] = isSwitch;
+    X[, 3] = isInc .* isSwitch;
+    X[, 4] = incProp;
+    X[, 5] = switchProp;
+    X[, 6] = incProp .* switchProp;
+    X[, 7] = incProp .* isInc;
+    X[, 8] = switchProp .* isSwitch;
+    X[, 9] = isInc .* isSwitch .* incProp;
+    X[, 10] = isInc .* isSwitch .* switchProp;
+    X[, 11] = isInc .* isSwitch .* incProp .* switchProp;
+    return X;
+  }
+  
+  row_vector etafy(real RT, vector a, matrix beta, row_vector X, real tau, real ndt) {
+    row_vector[2] eta = a' + X * beta;
+    eta[2] = eta[2] + tau * (log(RT - ndt) - eta[1]);
+    return eta;
+  }
+}
+
 data {
   int<lower=1> N;  // total number of observations
   int<lower=1> M; // total number of subjects
+  // int K;
   vector[N] RT;  // RTs on each trial
   array[N] int acc;  // accuracy on each trial
   vector<lower=0,upper=1>[N] isInc; //if trial is incongruent [1] or congruent [0]
@@ -8,10 +35,12 @@ data {
   vector[M] RTmin;
   array[N] int trial; //trial witin block
   array[N] int S;
+  // int<lower=1> N_rep;
+  // matrix[N_rep, K] X_rep;
 }
 
 transformed data {
-  int K=11;
+  int K = 11;
 }
 
 parameters {
@@ -23,21 +52,16 @@ parameters {
   real<lower=0> alpha_t_sigma;
   vector[M] alpha_t_z;
   
-  real a_rt_mu;
-  real<lower=0> a_rt_sigma;
-  vector[M] a_rt_z;
+  vector[2] a_mu;
+  vector<lower=0>[2] a_sigma;
+  cholesky_factor_corr[2] a_L;
+  matrix[2, M] a_z;
   
-  real a_acc_mu;
-  real<lower=0> a_acc_sigma;
-  vector[M] a_acc_z;
-  
-  vector[K] beta_rt_mu;
-  real<lower=0> beta_rt_sigma;
-  matrix[K, M] beta_rt_z;
-  
-  vector[K] beta_acc_mu;
-  real<lower=0> beta_acc_sigma;
-  matrix[K, M] beta_acc_z;
+  matrix[K, 2] beta_mu;
+  simplex[K] beta_row_sigma;
+  vector<lower=0>[2] beta_col_sigma;
+  cholesky_factor_corr[2] beta_col_L;
+  array[M] matrix[K, 2] beta_z;
   
   vector<lower=0,upper=1>[M] ndt_raw;
   vector<lower=0>[M] sigma;
@@ -48,14 +72,17 @@ transformed parameters {
   vector[N] switchProp;
   vector[N] incProp;
   matrix[N, K] X;
-  vector[M] ndt = RTmin .* ndt_raw;
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
   vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
-  vector[M] a_rt = a_rt_mu + a_rt_sigma * a_rt_z;
-  vector[M] a_acc = a_acc_mu + a_acc_sigma * a_acc_z;
-  matrix[K, M] beta_rt = rep_matrix(beta_rt_mu, M) + beta_rt_sigma .* beta_rt_z;
-  matrix[K, M] beta_acc = rep_matrix(beta_acc_mu, M) + beta_acc_sigma .* beta_acc_z;
-
+  matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
+  array[M] matrix[K, 2] beta;
+  vector[M] ndt = RTmin .* ndt_raw;
+  
+  {
+    matrix[2, 2] VT = diag_pre_multiply(beta_col_sigma, beta_col_L');
+    for (j in 1:M) beta[j] = beta_mu + diag_pre_multiply(beta_row_sigma, beta_z[j] * VT);
+  }
+  
   for (t in 1:N) {
     if (trial[t] == 1) {
       switchProp[t] = 0.5;
@@ -67,41 +94,25 @@ transformed parameters {
     }
   }
   
-  // switchProp = (switchProp - min(switchProp)) / (max(switchProp) - min(switchProp));
-  // incProp = (incProp - min(incProp)) / (max(incProp) - min(incProp));
   switchProp = (switchProp-0.25)/.5;
   incProp = (incProp-0.25)/.5;
-  
-  X[, 1] = isInc;
-  X[, 2] = isSwitch;
-  X[, 3] = isInc .* isSwitch;
-  X[, 4] = incProp;
-  X[, 5] = switchProp;
-  X[, 6] = incProp .* switchProp;
-  X[, 7] = incProp .* isInc;
-  X[, 8] = switchProp .* isSwitch;
-  X[, 9] = isInc .* isSwitch .* incProp;
-  X[, 10] = isInc .* isSwitch .* switchProp;
-  X[, 11] = isInc .* isSwitch .* incProp .* switchProp;
+  X = design_matrix(isInc, isSwitch, incProp, switchProp, K);
+
 }
 
 model {
   {
-    vector[N] eta_rt;
-    vector[N] resid_rt;
-    vector[N] eta_acc;
+    matrix[N, 2] eta;
     vector[N] sigma_vec;
     vector[N] ndt_vec;
     for (t in 1:N) {
-      eta_rt[t] = a_rt[S[t]] + X[t] * col(beta_rt, S[t]);
-      resid_rt[t] = log(RT[t] - ndt[S[t]]) - eta_rt[t];
-      eta_acc[t] = a_acc[S[t]] + X[t] * col(beta_acc, S[t]) + tau[S[t]] * resid_rt[t];
+      eta[t] = etafy(RT[t], col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]]);
       sigma_vec[t] = sigma[S[t]];
       ndt_vec[t] = ndt[S[t]];
     }
     
-    (RT - ndt_vec) ~ lognormal(eta_rt, sigma_vec);
-    acc ~ bernoulli(Phi_approx(eta_acc));
+    (RT - ndt_vec) ~ lognormal(col(eta, 1), sigma_vec);
+    acc ~ bernoulli(Phi_approx(col(eta, 2)));
   }
   
   alpha_0_mu ~ normal(0, 2.5);
@@ -112,21 +123,13 @@ model {
   alpha_t_sigma ~ normal(0, 0.25);
   alpha_t_z ~ std_normal();
   
-  a_rt_mu ~ normal(-1, 1.5);
-  a_rt_sigma ~ normal(0, 1.5);
-  a_rt_z ~ std_normal();
+  a_mu ~ normal([-1, 1.5]', [1.5, 1]');
+  a_sigma ~ std_normal();
+  to_vector(a_z) ~ std_normal();
   
-  a_acc_mu ~ normal(1.5, 1);
-  a_acc_sigma ~ std_normal();
-  a_acc_z ~ std_normal();
-  
-  beta_rt_mu ~ std_normal();
-  beta_rt_sigma ~ std_normal();
-  to_vector(beta_rt_z) ~ std_normal();
-  
-  beta_acc_mu ~ std_normal();
-  beta_acc_sigma ~ std_normal();
-  to_vector(beta_acc_z) ~ std_normal();
+  to_vector(beta_mu) ~ std_normal();
+  beta_col_sigma ~ std_normal();
+  for (j in 1:M) to_vector(beta_z[j]) ~ std_normal();
   
   ndt ~ normal(0, 0.3);
   target += sum(log(RTmin));
@@ -136,19 +139,22 @@ model {
 
 generated quantities {
   
+  real a_rt_mu = a_mu[1];
+  real a_rt_sigma = a_sigma[1];
+  real a_acc_mu = a_mu[2];
+  real a_acc_sigma = a_sigma[2];
+  vector[K] beta_rt_mu = col(beta_mu, 1);
+  vector[K] beta_acc_mu = col(beta_mu, 2);
+  corr_matrix[2] a_R = a_L * a_L';
+  corr_matrix[2] beta_R = beta_col_L * beta_col_L';
+  real a_rho = a_R[1, 2];
+  real beta_rho = beta_R[1, 2];
+  
   vector[N] log_lik;
-  real log_lik_total;
-  {
-    real eta_rt;
-    real resid_rt;
-    real eta_acc;
-    for (t in 1:N) {
-      eta_rt = a_rt[S[t]] + X[t] * col(beta_rt, S[t]);
-      resid_rt = log(RT[t] - ndt[S[t]]) - eta_rt;
-      eta_acc = a_acc[S[t]] + X[t] * col(beta_acc, S[t]) + tau[S[t]] * resid_rt;
-      log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta_rt, sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta_acc));
-    }
+
+  for (t in 1:N) {
+    row_vector[2] eta = etafy(RT[t], col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]]);
+    log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta[1], sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta[2]));
   }
   
-  log_lik_total = sum(log_lik);
 }

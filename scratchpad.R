@@ -1,5 +1,7 @@
 datadir <- "../modeling-of-control/data/"
-
+parstokeep <- c("alpha_0_mu", "alpha_0_sigma", "alpha_t_mu", "alpha_t_sigma",
+                "a_mu", "a_sigma", "beta_mu", "beta_col_sigma", "beta_row_sigma", "a_rho", "beta_rho",
+                "ndt", "sigma", "tau")
 # rstan options
 rstan_options(auto_write = TRUE)
 
@@ -31,9 +33,10 @@ fit_learner_5 <- sampling(model_learner, stan_data, iter=400, pars=c("X", "switc
 
 ds <- df
 stan_data <- list(isInc=ds$stimCongruency, isSwitch=ds$switchType, RT=ds$RT, acc=ds$acc,
-                  N=nrow(ds), M=uniqueN(ds$subject), K=3, RTmin=ds[,min(RT), by=subject]$V1, trial=ds$trial, S=ds$subject)
+                  N=nrow(ds), M=uniqueN(ds$subject), K=3, RTmin=ds[,min(RT), by=subject]$V1,
+                  blockTrial=ds$trial, trial=ds[, .(1:.N),by=subject]$V1, S=ds$subject)
 model_hier <- stan_model("models/normlognorm_learner_hierarchical.stan")
-fit_hier <- sampling(model_hier, stan_data, iter=500, pars=c("X", "switchProp", "incProp"), include=F, init="0")
+fit_hier_blockmem <- sampling(model_hier, stan_data, iter=500, pars=parstokeep, init="0")
 
 
 ##### raw tradeoffs
