@@ -12,9 +12,9 @@ df <- read.csv(paste0(datadir, "dataset1.csv")) |>
   dplyr::filter(RT < 1.5 & RT > 0.3) |> as.data.table()
 df[,trial := 1:.N, by=.(subject, block)]
 
-stan_data <- list(isInc=ds$stimCongruency, isSwitch=ds$switchType, RT=ds$RT, acc=ds$acc,
-                  N=nrow(ds), M=uniqueN(ds$subject), K=3, RTmin=ds[,min(RT), by=subject]$V1,
-                  trial=ds$trial, S=ds$subject)
+stan_data <- list(isInc=df$stimCongruency, isSwitch=df$switchType, RT=df$RT, acc=df$acc,
+                  N=nrow(df), M=uniqueN(df$subject), K=3, RTmin=df[,min(RT), by=subject]$V1,
+                  trial=df$trial, S=df$subject)
 model_hier <- stan_model("models/normlognorm_learner_hierarchical_allin.stan")
 fit_hier <- sampling(model_hier, stan_data, iter=10, chains=1, pars=parstokeep, init="0")
 save(fit_hier, paste0("fit_", Sys.time() |> as.numeric()))
