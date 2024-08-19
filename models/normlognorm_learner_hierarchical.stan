@@ -58,7 +58,7 @@ parameters {
   matrix[2, M] a_z;
   
   matrix[K, 2] beta_mu;
-  simplex[K] beta_row_sigma;
+  simplex<lower=0>[K] beta_row_sigma;
   vector<lower=0>[2] beta_col_sigma;
   cholesky_factor_corr[2] beta_col_L;
   array[M] matrix[K, 2] beta_z;
@@ -128,7 +128,7 @@ model {
   to_vector(a_z) ~ std_normal();
   
   to_vector(beta_mu) ~ std_normal();
-  beta_col_sigma ~ std_normal();
+  beta_col_sigma ~ normal(0, 2.5);s
   for (j in 1:M) to_vector(beta_z[j]) ~ std_normal();
   
   ndt ~ normal(0, 0.3);
@@ -138,23 +138,19 @@ model {
 }
 
 generated quantities {
-  
-  real a_rt_mu = a_mu[1];
-  real a_rt_sigma = a_sigma[1];
-  real a_acc_mu = a_mu[2];
-  real a_acc_sigma = a_sigma[2];
-  vector[K] beta_rt_mu = col(beta_mu, 1);
-  vector[K] beta_acc_mu = col(beta_mu, 2);
-  corr_matrix[2] a_R = a_L * a_L';
-  corr_matrix[2] beta_R = beta_col_L * beta_col_L';
-  real a_rho = a_R[1, 2];
-  real beta_rho = beta_R[1, 2];
-  
+  real a_rho = (a_L * a_L')[1, 2];
+  real beta_rho = (beta_col_L * beta_col_L')[1, 2];
   vector[N] log_lik;
-
+  array[N] real RT_pp;
+  array[N] real acc_pp;
+  
   for (t in 1:N) {
     row_vector[2] eta = etafy(RT[t], col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]]);
+    real RT_resid = sigma[S[t]] * std_normal_rng();
+    
     log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta[1], sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta[2]));
+    RT_pp[t] = ndt[S[t]] + exp(eta[1] + RT_resid);
+    acc_pp[t] = Phi_approx(col(a, S[t])[2] + X[t] * col(beta[S[t]], 2) + tau[S[t]] * RT_resid);
   }
-  
 }
+  
