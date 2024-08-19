@@ -59,9 +59,9 @@ parameters {
   cholesky_factor_corr[2] beta_col_L;
   array[M] matrix[K, 2] beta_z;
   
-  vector[4] gamma_mu;
-  vector<lower=0>[4] gamma_sigma;
-  matrix[4, M] gamma_z;
+  vector[3] gamma_mu;
+  vector<lower=0>[3] gamma_sigma;
+  array[M] vector[3] gamma_z;
   
   vector<lower=0,upper=1>[M] ndt_raw;
   vector<lower=0>[M] sigma;
@@ -76,13 +76,18 @@ transformed parameters {
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
   vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
   matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
+  array[M] vector[3] gamma;
   array[M] matrix[K, 2] beta;
   vector[M] ndt = RTmin .* ndt_raw;
-  matrix[4, M] gamma = rep_matrix(gamma_mu, M) + diag_pre_multiply(gamma_sigma, gamma_z);
-  
+
   {
     matrix[2, 2] VT = diag_pre_multiply(beta_col_sigma, beta_col_L');
     for (j in 1:M) beta[j] = beta_mu + diag_pre_multiply(beta_row_sigma, beta_z[j] * VT);
+  }
+  
+  for (j in 1:M) {
+    gamma[j] = gamma_mu + gamma_sigma .* gamma_z[j];
+    gamma[j] = gamma[j] / sqrt(dot_self(gamma[j]));
   }
   
   for (t in 1:N) {
@@ -99,11 +104,8 @@ transformed parameters {
   
   switchProp = (switchProp-0.5)/.5;
   incProp = (incProp-0.5)/.5;
-  {
-    matrix[N, 4] G = [rep_vector(1, N), incProp', switchProp', (incProp .* switchProp)'];
-    for (t in 1:N) controlLevel[t] = inv_logit(G * col(gamma, S[t]));
-  }
-  X = design_matrix(isInc, isSwitch, incProp, switchProp, K);
+  for (t in 1:N) controlLevel[t] = [switchProp[t], incProp[t], switchProp[t]*incProp[t]] * gamma[S[t]];
+  X = design_matrix(isInc, isSwitch, controlLevel, K);
 
 }
 
