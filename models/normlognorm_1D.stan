@@ -1,19 +1,15 @@
 functions {
-  matrix design_matrix(vector isInc, vector isSwitch, vector incProp, vector switchProp, int K) {
+  matrix design_matrix(vector isInc, vector isSwitch, vector controlLevel, int K) {
     int N = num_elements(isInc);
     matrix[N, K] X;
     
     X[, 1] = isInc;
     X[, 2] = isSwitch;
     X[, 3] = isInc .* isSwitch;
-    X[, 4] = incProp;
-    X[, 5] = switchProp;
-    X[, 6] = incProp .* switchProp;
-    X[, 7] = incProp .* isInc;
-    X[, 8] = switchProp .* isSwitch;
-    X[, 9] = isInc .* isSwitch .* incProp;
-    X[, 10] = isInc .* isSwitch .* switchProp;
-    X[, 11] = isInc .* isSwitch .* incProp .* switchProp;
+    X[, 4] = controlLevel;
+    X[, 5] = controlLevel .* isInc;
+    X[, 6] = controlLevel .* isSwitch;
+    X[, 7] = controlLevel .* isInc .* isSwitch;
     return X;
   }
   
@@ -40,7 +36,7 @@ data {
 }
 
 transformed data {
-  int K = 11;
+  int K = 7;
 }
 
 parameters {
@@ -63,6 +59,10 @@ parameters {
   cholesky_factor_corr[2] beta_col_L;
   array[M] matrix[K, 2] beta_z;
   
+  vector[4] gamma_mu;
+  vector<lower=0>[4] gamma_sigma;
+  matrix[4, M] gamma_z;
+  
   vector<lower=0,upper=1>[M] ndt_raw;
   vector<lower=0>[M] sigma;
   vector[M] tau;
@@ -71,12 +71,14 @@ parameters {
 transformed parameters {
   vector[N] switchProp;
   vector[N] incProp;
+  vector[N] controlLevel;
   matrix[N, K] X;
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
   vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
   matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
   array[M] matrix[K, 2] beta;
   vector[M] ndt = RTmin .* ndt_raw;
+  matrix[4, M] gamma = rep_matrix(gamma_mu, M) + diag_pre_multiply(gamma_sigma, gamma_z);
   
   {
     matrix[2, 2] VT = diag_pre_multiply(beta_col_sigma, beta_col_L');
@@ -94,8 +96,13 @@ transformed parameters {
     }
   }
   
-  switchProp = (switchProp-0.25)/.5;
-  incProp = (incProp-0.25)/.5;
+  
+  switchProp = (switchProp-0.5)/.5;
+  incProp = (incProp-0.5)/.5;
+  {
+    matrix[N, 4] G = [rep_vector(1, N), incProp', switchProp', (incProp .* switchProp)'];
+    for (t in 1:N) controlLevel[t] = inv_logit(G * col(gamma, S[t]));
+  }
   X = design_matrix(isInc, isSwitch, incProp, switchProp, K);
 
 }
@@ -128,7 +135,7 @@ model {
   to_vector(a_z) ~ std_normal();
   
   to_vector(beta_mu) ~ std_normal();
-  beta_col_sigma ~ normal(0, 2.5);s
+  beta_col_sigma ~ normal(0, 2.5);
   for (j in 1:M) to_vector(beta_z[j]) ~ std_normal();
   
   ndt ~ normal(0, 0.3);
