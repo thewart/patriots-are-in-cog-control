@@ -48,9 +48,9 @@ parameters {
   real<lower=0> alpha_0_sigma;
   vector[M] alpha_0_z;
   
-  real alpha_t_mu;
-  real<lower=0> alpha_t_sigma;
-  vector[M] alpha_t_z;
+  // real alpha_t_mu;
+  // real<lower=0> alpha_t_sigma;
+  // vector[M] alpha_t_z;
   
   vector[2] a_mu;
   vector<lower=0>[2] a_sigma;
@@ -73,7 +73,7 @@ transformed parameters {
   vector[N] incProp;
   matrix[N, K] X;
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
-  vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
+  // vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
   matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
   array[M] matrix[K, 2] beta;
   vector[M] ndt = RTmin .* ndt_raw;
@@ -88,14 +88,14 @@ transformed parameters {
       switchProp[t] = 0.5;
       incProp[t] = 0.5;
     } else {
-      real lr = inv_logit(alpha_0[S[t]] + alpha_t[S[t]] * trial[t-1]);
+      real lr = inv_logit(alpha_0[S[t]]); // + alpha_t[S[t]] * trial[t-1]);
       switchProp[t] = switchProp[t-1] + lr * (isSwitch[t-1] - switchProp[t-1]);
       incProp[t] = incProp[t-1] + lr * (isInc[t-1] - incProp[t-1]);
     }
   }
   
-  switchProp = (switchProp-0.25)/.5;
-  incProp = (incProp-0.25)/.5;
+  switchProp = (switchProp-0.5)/.5;
+  incProp = (incProp-0.5)/.5;
   X = design_matrix(isInc, isSwitch, incProp, switchProp, K);
 
 }
@@ -119,16 +119,16 @@ model {
   alpha_0_sigma ~ normal(0, 2.5);
   alpha_0_z ~ std_normal();
   
-  alpha_t_mu ~ normal(0, 0.25);
-  alpha_t_sigma ~ normal(0, 0.25);
-  alpha_t_z ~ std_normal();
+  // alpha_t_mu ~ normal(0, 0.25);
+  // alpha_t_sigma ~ normal(0, 0.25);
+  // alpha_t_z ~ std_normal();
   
   a_mu ~ normal([-1, 1.5]', [1.5, 1]');
   a_sigma ~ std_normal();
   to_vector(a_z) ~ std_normal();
   
   to_vector(beta_mu) ~ std_normal();
-  beta_col_sigma ~ normal(0, 2.5);s
+  beta_col_sigma ~ normal(0, 2.5);
   for (j in 1:M) to_vector(beta_z[j]) ~ std_normal();
   
   ndt ~ normal(0, 0.3);
