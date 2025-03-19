@@ -30,7 +30,6 @@ functions {
 
     return acc_pp/RT_pp;
   }
-
 }
 
 data {
@@ -61,17 +60,17 @@ parameters {
   matrix[2, M] a_z;
   
   matrix[K, 2] beta_mu;
-  simplex[K] beta_row_sigma;
+  // simplex[K] beta_row_sigma;
   vector<lower=0>[2] beta_col_sigma;
   cholesky_factor_corr[2] beta_col_L;
   array[M] matrix[K, 2] beta_z;
   
   // vector[3] gamma_mu;
-  real<lower=0> gamma_switch_mu;
+  // real<lower=0> gamma_switch_mu;
   real gamma_inc_mu;
   real gamma_int_mu;
-  vector<lower=0>[3] gamma_sigma;
-  array[M] vector[3] gamma_z;
+  real<lower=0> gamma_sigma;
+  array[M] vector[2] gamma_z;
   
   vector<lower=0,upper=1>[M] ndt_raw;
   vector<lower=0>[M] sigma;
@@ -86,18 +85,18 @@ transformed parameters {
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
   // vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
   matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
-  vector[3] gamma_mu = [gamma_switch_mu, gamma_inc_mu, gamma_int_mu]';
+  vector[3] gamma_mu = [1, gamma_inc_mu, gamma_int_mu]';
   array[M] vector[3] gamma;
   array[M] matrix[K, 2] beta;
   vector[M] ndt = RTmin .* ndt_raw;
 
   {
     matrix[2, 2] VT = diag_pre_multiply(beta_col_sigma, beta_col_L');
-    for (j in 1:M) beta[j] = beta_mu + diag_pre_multiply(beta_row_sigma, beta_z[j] * VT);
+    for (j in 1:M) beta[j] = beta_mu + diag_pre_multiply(rep_vector(1, K), beta_z[j] * VT);
   }
   
   for (j in 1:M) {
-    gamma[j] = gamma_mu + gamma_sigma .* gamma_z[j];
+    gamma[j] = gamma_mu + gamma_sigma * [0, gamma_z[j][1], gamma_z[j][2]]';
     gamma[j] = gamma[j] / sqrt(dot_self(gamma[j]));
   }
   
@@ -111,7 +110,6 @@ transformed parameters {
       incProp[t] = incProp[t-1] + lr * (isInc[t-1] - incProp[t-1]);
     }
   }
-  
   
   switchProp = (switchProp-0.5)/.5;
   incProp = (incProp-0.5)/.5;
@@ -189,4 +187,3 @@ generated quantities {
     }
   }
 }
-  

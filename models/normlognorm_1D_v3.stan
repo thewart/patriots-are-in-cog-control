@@ -18,19 +18,6 @@ functions {
     eta[2] = eta[2] + tau * (log(RT - ndt) - eta[1]);
     return eta;
   }
-  
-  real RR_rng(vector a, matrix beta, row_vector X, real tau, real ndt, real sigma) {
-    real RT_pp;
-    real acc_pp;
-    real RT_resid = sigma * std_normal_rng();
-    row_vector[2] eta = a' + X * beta;
-    eta[2] = eta[2] + tau * RT_resid;
-    RT_pp = ndt + exp(eta[1] + RT_resid);
-    acc_pp = Phi_approx(eta[2]);
-
-    return acc_pp/RT_pp;
-  }
-
 }
 
 data {
@@ -44,6 +31,8 @@ data {
   vector[M] RTmin;
   array[N] int trial; //trial witin block
   array[N] int S;
+  // int<lower=1> N_rep;
+  // matrix[N_rep, K] X_rep;
 }
 
 transformed data {
@@ -54,6 +43,10 @@ parameters {
   real alpha_0_mu;
   real<lower=0> alpha_0_sigma;
   vector[M] alpha_0_z;
+  
+  // real alpha_t_mu;
+  // real<lower=0> alpha_t_sigma;
+  // vector[M] alpha_t_z;
   
   vector[2] a_mu;
   vector<lower=0>[2] a_sigma;
@@ -66,12 +59,9 @@ parameters {
   cholesky_factor_corr[2] beta_col_L;
   array[M] matrix[K, 2] beta_z;
   
-  // vector[3] gamma_mu;
-  real<lower=0> gamma_switch_mu;
-  real gamma_inc_mu;
-  real gamma_int_mu;
-  vector<lower=0>[3] gamma_sigma;
-  array[M] vector[3] gamma_z;
+  vector[2] gamma_mu;
+  vector<lower=0>[2] gamma_sigma;
+  array[M] vector[2] gamma_z;
   
   vector<lower=0,upper=1>[M] ndt_raw;
   vector<lower=0>[M] sigma;
@@ -86,7 +76,7 @@ transformed parameters {
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
   // vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
   matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
-  vector[3] gamma_mu = [gamma_switch_mu, gamma_inc_mu, gamma_int_mu]';
+  // vector[3] gamma_mu = [gamma_inc_mu, gamma_switch_mu, gamma_int_mu]';
   array[M] vector[3] gamma;
   array[M] matrix[K, 2] beta;
   vector[M] ndt = RTmin .* ndt_raw;
@@ -97,7 +87,8 @@ transformed parameters {
   }
   
   for (j in 1:M) {
-    gamma[j] = gamma_mu + gamma_sigma .* gamma_z[j];
+    gamma[j][1] = 1;
+    gamma[j][2:3] = gamma_mu + gamma_sigma .* gamma_z[j];
     gamma[j] = gamma[j] / sqrt(dot_self(gamma[j]));
   }
   
@@ -139,6 +130,10 @@ model {
   alpha_0_sigma ~ normal(0, 2.5);
   alpha_0_z ~ std_normal();
   
+  // alpha_t_mu ~ normal(0, 0.25);
+  // alpha_t_sigma ~ normal(0, 0.25);
+  // alpha_t_z ~ std_normal();
+  
   a_mu ~ normal([-1, 1.5]', [1.5, 1]');
   a_sigma ~ std_normal();
   to_vector(a_z) ~ std_normal();
@@ -147,8 +142,8 @@ model {
   beta_col_sigma ~ normal(0, 2.5);
   for (j in 1:M) to_vector(beta_z[j]) ~ std_normal();
   
-  gamma_mu ~ normal(0, 5);
-  gamma_sigma ~ normal(0, 5);
+  gamma_mu ~ normal(0, 1);
+  gamma_sigma ~ normal(0, 1);
   for (j in 1:M) gamma_z[j] ~ std_normal();
   
   ndt ~ normal(0, 0.3);
@@ -161,32 +156,16 @@ generated quantities {
   real a_rho = (a_L * a_L')[1, 2];
   real beta_rho = (beta_col_L * beta_col_L')[1, 2];
   vector[N] log_lik;
-  array[N] real RR_pp;
-  array[9,9] vector[4] RR_mu;
-
+  array[N] real RT_pp;
+  array[N] real acc_pp;
+  
   for (t in 1:N) {
     row_vector[2] eta = etafy(RT[t], col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]]);
-    log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta[1], sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta[2]));
+    real RT_resid = sigma[S[t]] * std_normal_rng();
     
-    RR_pp[t] = RR_rng(col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]], sigma[S[t]]);
-  }
-  
-  {
-    vector[9] incProp_rep = [-1.0, -.75, -.5, -.25, 0, .25, .5, .75, 1.0]';
-    vector[9] switchProp_rep = [-1.0, -.75, -.5, -.25, 0, .25, .5, .75, 1.0]';
-    real mu_sigma = mean(sigma);
-    real mu_tau = mean(tau);
-    real mu_ndt = mean(ndt);
-    vector[3] gamma_mu_norm = gamma_mu / sqrt(dot_self(gamma_mu));
-    vector[4] isInc_rep = [0, 1, 0, 1]';
-    vector[4] isSwitch_rep = [0, 0, 1, 1]';
-    for (i in 1:9) {
-      for (j in 1:9) {
-        real ctrl_tmp = [switchProp_rep[j], incProp_rep[i], switchProp_rep[j]*incProp_rep[i]] * gamma_mu_norm;
-        matrix[4, K] X_tmp = design_matrix(isInc_rep, isSwitch_rep, rep_vector(ctrl_tmp, 4), K);
-        for (t in 1:4) RR_mu[i,j][t] = RR_rng(a_mu, beta_mu, X_tmp[t], mu_tau, mu_ndt, mu_sigma);
-      }
-    }
+    log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta[1], sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta[2]));
+    RT_pp[t] = ndt[S[t]] + exp(eta[1] + RT_resid);
+    acc_pp[t] = Phi_approx(col(a, S[t])[2] + X[t] * col(beta[S[t]], 2) + tau[S[t]] * RT_resid);
   }
 }
   

@@ -9,11 +9,15 @@ functions {
     X[, 4] = incProp;
     X[, 5] = switchProp;
     X[, 6] = incProp .* switchProp;
-    X[, 7] = incProp .* isInc;
-    X[, 8] = switchProp .* isSwitch;
-    X[, 9] = isInc .* isSwitch .* incProp;
-    X[, 10] = isInc .* isSwitch .* switchProp;
-    X[, 11] = isInc .* isSwitch .* incProp .* switchProp;
+    X[, 7] = isInc .* incProp;
+    X[, 8] = isInc .* switchProp;
+    X[, 9] = isInc .* incProp .* switchProp;
+    X[, 10] = isSwitch .* switchProp;
+    X[, 11] = isSwitch .* incProp;
+    X[, 12] = isSwitch .* switchProp .* incProp;
+    X[, 13] = isInc .* isSwitch .* incProp;
+    X[, 14] = isInc .* isSwitch .* switchProp;
+    X[, 15] = isInc .* isSwitch .* incProp .* switchProp;
     return X;
   }
   
@@ -21,6 +25,18 @@ functions {
     row_vector[2] eta = a' + X * beta;
     eta[2] = eta[2] + tau * (log(RT - ndt) - eta[1]);
     return eta;
+  }
+  
+  real RR_rng(vector a, matrix beta, row_vector X, real tau, real ndt, real sigma) {
+    real RT_pp;
+    real acc_pp;
+    real RT_resid = sigma * std_normal_rng();
+    row_vector[2] eta = a' + X * beta;
+    eta[2] = eta[2] + tau * RT_resid;
+    RT_pp = ndt + exp(eta[1] + RT_resid);
+    acc_pp = Phi_approx(eta[2]);
+
+    return acc_pp/RT_pp;
   }
 }
 
@@ -35,12 +51,10 @@ data {
   vector[M] RTmin;
   array[N] int trial; //trial witin block
   array[N] int S;
-  // int<lower=1> N_rep;
-  // matrix[N_rep, K] X_rep;
 }
 
 transformed data {
-  int K = 11;
+  int K = 15;
 }
 
 parameters {
@@ -48,18 +62,14 @@ parameters {
   real<lower=0> alpha_0_sigma;
   vector[M] alpha_0_z;
   
-  // real alpha_t_mu;
-  // real<lower=0> alpha_t_sigma;
-  // vector[M] alpha_t_z;
-  
   vector[2] a_mu;
   vector<lower=0>[2] a_sigma;
   cholesky_factor_corr[2] a_L;
   matrix[2, M] a_z;
   
   matrix[K, 2] beta_mu;
-  simplex[K] beta_row_sigma;
   vector<lower=0>[2] beta_col_sigma;
+  simplex[K] beta_row_sigma;
   cholesky_factor_corr[2] beta_col_L;
   array[M] matrix[K, 2] beta_z;
   
@@ -73,7 +83,6 @@ transformed parameters {
   vector[N] incProp;
   matrix[N, K] X;
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
-  // vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
   matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
   array[M] matrix[K, 2] beta;
   vector[M] ndt = RTmin .* ndt_raw;
@@ -118,11 +127,7 @@ model {
   alpha_0_mu ~ normal(0, 2.5);
   alpha_0_sigma ~ normal(0, 2.5);
   alpha_0_z ~ std_normal();
-  
-  // alpha_t_mu ~ normal(0, 0.25);
-  // alpha_t_sigma ~ normal(0, 0.25);
-  // alpha_t_z ~ std_normal();
-  
+
   a_mu ~ normal([-1, 1.5]', [1.5, 1]');
   a_sigma ~ std_normal();
   to_vector(a_z) ~ std_normal();
@@ -141,16 +146,31 @@ generated quantities {
   real a_rho = (a_L * a_L')[1, 2];
   real beta_rho = (beta_col_L * beta_col_L')[1, 2];
   vector[N] log_lik;
-  array[N] real RT_pp;
-  array[N] real acc_pp;
-  
+  array[N] real RR_pp;
+  array[9,9] vector[4] RR_mu;
+
   for (t in 1:N) {
     row_vector[2] eta = etafy(RT[t], col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]]);
-    real RT_resid = sigma[S[t]] * std_normal_rng();
-    
     log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta[1], sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta[2]));
-    RT_pp[t] = ndt[S[t]] + exp(eta[1] + RT_resid);
-    acc_pp[t] = Phi_approx(col(a, S[t])[2] + X[t] * col(beta[S[t]], 2) + tau[S[t]] * RT_resid);
+    
+    RR_pp[t] = RR_rng(a_mu, beta_mu, X[t], mean(tau), mean(ndt), mean(sigma));
   }
+  
+  {
+    vector[9] incProp_rep = [-1.0, -.75, -.5, -.25, 0, .25, .5, .75, 1.0]';
+    vector[9] switchProp_rep = [-1.0, -.75, -.5, -.25, 0, .25, .5, .75, 1.0]';
+    real mu_sigma = mean(sigma);
+    real mu_tau = mean(tau);
+    real mu_ndt = mean(ndt);
+    vector[4] isInc_rep = [0, 1, 0, 1]';
+    vector[4] isSwitch_rep = [0, 0, 1, 1]';
+    for (i in 1:9) {
+      for (j in 1:9) {
+        matrix[4, K] X_tmp = design_matrix(isInc_rep, isSwitch_rep, rep_vector(incProp_rep[i], 4), rep_vector(switchProp_rep[j], 4), K);
+        for (t in 1:4) RR_mu[i,j][t] = RR_rng(a_mu, beta_mu, X_tmp[t], mu_tau, mu_ndt, mu_sigma);
+      }
+    }
+  }
+  
 }
   

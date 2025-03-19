@@ -1,15 +1,15 @@
 functions {
-  matrix design_matrix(vector isInc, vector isSwitch, vector controlLevel, int K) {
+  matrix design_matrix(vector isInc, vector isSwitch, vector incProp, vector switchProp, int K) {
     int N = num_elements(isInc);
     matrix[N, K] X;
     
     X[, 1] = isInc;
     X[, 2] = isSwitch;
     X[, 3] = isInc .* isSwitch;
-    X[, 4] = controlLevel;
-    X[, 5] = controlLevel .* isInc;
-    X[, 6] = controlLevel .* isSwitch;
-    X[, 7] = controlLevel .* isInc .* isSwitch;
+    X[, 4] = incProp;
+    X[, 5] = switchProp;
+    X[, 6] = incProp .* isInc;
+    X[, 7] = switchProp .* isSwitch;
     return X;
   }
   
@@ -30,13 +30,11 @@ functions {
 
     return acc_pp/RT_pp;
   }
-
 }
 
 data {
   int<lower=1> N;  // total number of observations
   int<lower=1> M; // total number of subjects
-  // int K;
   vector[N] RT;  // RTs on each trial
   array[N] int acc;  // accuracy on each trial
   vector<lower=0,upper=1>[N] isInc; //if trial is incongruent [1] or congruent [0]
@@ -66,13 +64,6 @@ parameters {
   cholesky_factor_corr[2] beta_col_L;
   array[M] matrix[K, 2] beta_z;
   
-  // vector[3] gamma_mu;
-  real<lower=0> gamma_switch_mu;
-  real gamma_inc_mu;
-  real gamma_int_mu;
-  vector<lower=0>[3] gamma_sigma;
-  array[M] vector[3] gamma_z;
-  
   vector<lower=0,upper=1>[M] ndt_raw;
   vector<lower=0>[M] sigma;
   vector[M] tau;
@@ -81,24 +72,15 @@ parameters {
 transformed parameters {
   vector[N] switchProp;
   vector[N] incProp;
-  vector[N] controlLevel;
   matrix[N, K] X;
   vector[M] alpha_0 = alpha_0_mu + alpha_0_sigma * alpha_0_z;
-  // vector[M] alpha_t = alpha_t_mu + alpha_t_sigma * alpha_t_z;
   matrix[2, M] a = rep_matrix(a_mu, M) + diag_pre_multiply(a_sigma, a_L) * a_z;
-  vector[3] gamma_mu = [gamma_switch_mu, gamma_inc_mu, gamma_int_mu]';
-  array[M] vector[3] gamma;
   array[M] matrix[K, 2] beta;
   vector[M] ndt = RTmin .* ndt_raw;
-
+  
   {
     matrix[2, 2] VT = diag_pre_multiply(beta_col_sigma, beta_col_L');
     for (j in 1:M) beta[j] = beta_mu + diag_pre_multiply(beta_row_sigma, beta_z[j] * VT);
-  }
-  
-  for (j in 1:M) {
-    gamma[j] = gamma_mu + gamma_sigma .* gamma_z[j];
-    gamma[j] = gamma[j] / sqrt(dot_self(gamma[j]));
   }
   
   for (t in 1:N) {
@@ -106,17 +88,15 @@ transformed parameters {
       switchProp[t] = 0.5;
       incProp[t] = 0.5;
     } else {
-      real lr = inv_logit(alpha_0[S[t]]); //+ alpha_t[S[t]] * trial[t-1]);
+      real lr = inv_logit(alpha_0[S[t]]); // + alpha_t[S[t]] * trial[t-1]);
       switchProp[t] = switchProp[t-1] + lr * (isSwitch[t-1] - switchProp[t-1]);
       incProp[t] = incProp[t-1] + lr * (isInc[t-1] - incProp[t-1]);
     }
   }
   
-  
   switchProp = (switchProp-0.5)/.5;
   incProp = (incProp-0.5)/.5;
-  for (t in 1:N) controlLevel[t] = [switchProp[t], incProp[t], switchProp[t]*incProp[t]] * gamma[S[t]];
-  X = design_matrix(isInc, isSwitch, controlLevel, K);
+  X = design_matrix(isInc, isSwitch, incProp, switchProp, K);
 
 }
 
@@ -138,7 +118,7 @@ model {
   alpha_0_mu ~ normal(0, 2.5);
   alpha_0_sigma ~ normal(0, 2.5);
   alpha_0_z ~ std_normal();
-  
+
   a_mu ~ normal([-1, 1.5]', [1.5, 1]');
   a_sigma ~ std_normal();
   to_vector(a_z) ~ std_normal();
@@ -146,10 +126,6 @@ model {
   to_vector(beta_mu) ~ std_normal();
   beta_col_sigma ~ normal(0, 2.5);
   for (j in 1:M) to_vector(beta_z[j]) ~ std_normal();
-  
-  gamma_mu ~ normal(0, 5);
-  gamma_sigma ~ normal(0, 5);
-  for (j in 1:M) gamma_z[j] ~ std_normal();
   
   ndt ~ normal(0, 0.3);
   target += sum(log(RTmin));
@@ -162,31 +138,13 @@ generated quantities {
   real beta_rho = (beta_col_L * beta_col_L')[1, 2];
   vector[N] log_lik;
   array[N] real RR_pp;
-  array[9,9] vector[4] RR_mu;
+  // array[9,9] vector[4] RR_mu;
 
   for (t in 1:N) {
     row_vector[2] eta = etafy(RT[t], col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]]);
     log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta[1], sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta[2]));
     
-    RR_pp[t] = RR_rng(col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]], sigma[S[t]]);
-  }
-  
-  {
-    vector[9] incProp_rep = [-1.0, -.75, -.5, -.25, 0, .25, .5, .75, 1.0]';
-    vector[9] switchProp_rep = [-1.0, -.75, -.5, -.25, 0, .25, .5, .75, 1.0]';
-    real mu_sigma = mean(sigma);
-    real mu_tau = mean(tau);
-    real mu_ndt = mean(ndt);
-    vector[3] gamma_mu_norm = gamma_mu / sqrt(dot_self(gamma_mu));
-    vector[4] isInc_rep = [0, 1, 0, 1]';
-    vector[4] isSwitch_rep = [0, 0, 1, 1]';
-    for (i in 1:9) {
-      for (j in 1:9) {
-        real ctrl_tmp = [switchProp_rep[j], incProp_rep[i], switchProp_rep[j]*incProp_rep[i]] * gamma_mu_norm;
-        matrix[4, K] X_tmp = design_matrix(isInc_rep, isSwitch_rep, rep_vector(ctrl_tmp, 4), K);
-        for (t in 1:4) RR_mu[i,j][t] = RR_rng(a_mu, beta_mu, X_tmp[t], mu_tau, mu_ndt, mu_sigma);
-      }
-    }
+    RR_pp[t] = RR_rng(a_mu, beta_mu, X[t], mean(tau), mean(ndt), mean(sigma));
   }
 }
   

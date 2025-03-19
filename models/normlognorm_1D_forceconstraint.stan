@@ -97,7 +97,8 @@ transformed parameters {
   }
   
   for (j in 1:M) {
-    gamma[j] = gamma_mu + gamma_sigma .* gamma_z[j];
+    gamma[j][1] = exp(gamma_mu[1] + gamma_sigma[1] .* gamma_z[j][1]);
+    gamma[j][2:3] = gamma_mu[2:3] + gamma_sigma[2:3] .* gamma_z[j][2:3];
     gamma[j] = gamma[j] / sqrt(dot_self(gamma[j]));
   }
   
@@ -111,7 +112,6 @@ transformed parameters {
       incProp[t] = incProp[t-1] + lr * (isInc[t-1] - incProp[t-1]);
     }
   }
-  
   
   switchProp = (switchProp-0.5)/.5;
   incProp = (incProp-0.5)/.5;
@@ -147,14 +147,14 @@ model {
   beta_col_sigma ~ normal(0, 2.5);
   for (j in 1:M) to_vector(beta_z[j]) ~ std_normal();
   
-  gamma_mu ~ normal(0, 5);
-  gamma_sigma ~ normal(0, 5);
-  for (j in 1:M) gamma_z[j] ~ std_normal();
-  
   ndt ~ normal(0, 0.3);
   target += sum(log(RTmin));
   tau ~ std_normal();
   sigma ~ normal(0, 2);
+  
+  gamma_mu ~ normal(0, 5);
+  gamma_sigma ~ normal(0, 5);
+  for (j in 1:M) gamma_z[j] ~ std_normal();
 }
 
 generated quantities {
@@ -168,7 +168,7 @@ generated quantities {
     row_vector[2] eta = etafy(RT[t], col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]]);
     log_lik[t] = lognormal_lpdf(RT[t] - ndt[S[t]] | eta[1], sigma[S[t]]) + bernoulli_lpmf(acc[t] | Phi_approx(eta[2]));
     
-    RR_pp[t] = RR_rng(col(a, S[t]), beta[S[t]], X[t], tau[S[t]], ndt[S[t]], sigma[S[t]]);
+    RR_pp[t] = RR_rng(a_mu, beta_mu, X[t], mean(tau), mean(ndt), mean(sigma));
   }
   
   {
